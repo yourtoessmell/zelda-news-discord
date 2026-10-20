@@ -1,13 +1,13 @@
 import json
 import os
 import re
+import ssl
 import urllib.request
 from urllib.parse import urljoin
 
 ZELDA_URL = "https://zelda.nintendo.com/"
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK")
 
-# Words that help us identify actual news/article links.
 NEWS_WORDS = (
     "news",
     "anniversary",
@@ -18,21 +18,29 @@ NEWS_WORDS = (
     "nintendo",
 )
 
+
 def fetch(url):
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "Mozilla/5.0 ZeldaNewsDiscordBot/1.0"
+            "User-Agent": "Mozilla/5.0"
         },
     )
-    with urllib.request.urlopen(req, timeout=30) as response:
+
+    # Ignore SSL certificate verification issues
+    context = ssl._create_unverified_context()
+
+    with urllib.request.urlopen(
+        req,
+        timeout=30,
+        context=context
+    ) as response:
         return response.read().decode("utf-8", errors="ignore")
 
 
 def get_news_links():
     html = fetch(ZELDA_URL)
 
-    # Find hyperlinks on Nintendo's Zelda page.
     matches = re.findall(
         r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
         html,
@@ -52,7 +60,6 @@ def get_news_links():
 
         combined = (title + " " + url).lower()
 
-        # Ignore navigation/social/legal links and keep Zelda/news-like items.
         if not any(word in combined for word in NEWS_WORDS):
             continue
 
@@ -71,18 +78,19 @@ def get_news_links():
         ):
             continue
 
-        articles.append({
-            "title": title,
-            "url": url
-        })
+        articles.append(
+            {
+                "title": title,
+                "url": url,
+            }
+        )
 
-    # Remove duplicates while preserving order.
     unique = []
-    seen = set()
+    seen_urls = set()
 
     for article in articles:
-        if article["url"] not in seen:
-            seen.add(article["url"])
+        if article["url"] not in seen_urls:
+            seen_urls.add(article["url"])
             unique.append(article)
 
     return unique
@@ -125,25 +133,34 @@ def send_to_discord(article):
         method="POST",
     )
 
-    with urllib.request.urlopen(req, timeout=30) as response:
+    context = ssl._create_unverified_context()
+
+    with urllib.request.urlopen(
+        req,
+        timeout=30,
+        context=context
+    ) as response:
         response.read()
 
 
 def main():
+    print(f"Checking {ZELDA_URL}")
+
     articles = get_news_links()
+
     current_urls = {article["url"] for article in articles}
     seen = load_seen()
 
     print(f"Found {len(articles)} Zelda links.")
 
-    # First run: remember existing articles WITHOUT spamming Discord.
     if not seen:
-        print("First run: saving existing articles as already seen.")
+        print("First run: saving existing articles.")
         save_seen(current_urls)
         return
 
     new_articles = [
-        article for article in articles
+        article
+        for article in articles
         if article["url"] not in seen
     ]
 
