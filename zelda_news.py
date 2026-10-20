@@ -1,96 +1,55 @@
 import json
 import os
-import re
-import ssl
-import urllib.request
-from urllib.parse import urljoin
+import requests
+from bs4 import BeautifulSoup
 
 ZELDA_URL = "https://zelda.nintendo.com/"
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK")
 
-NEWS_WORDS = (
-    "news",
-    "anniversary",
-    "concert",
-    "zelda",
-    "ocarina",
-    "soundtrack",
-    "nintendo",
-)
 
-
-def fetch(url):
-    req = urllib.request.Request(
-        url,
+def fetch_page():
+    response = requests.get(
+        ZELDA_URL,
         headers={
             "User-Agent": "Mozilla/5.0"
         },
+        timeout=30,
+        verify=False
     )
 
-    # Ignore SSL certificate verification issues
-    context = ssl._create_unverified_context()
-
-    with urllib.request.urlopen(
-        req,
-        timeout=30,
-        context=context
-    ) as response:
-        return response.read().decode("utf-8", errors="ignore")
+    response.raise_for_status()
+    return response.text
 
 
 def get_news_links():
-    html = fetch(ZELDA_URL)
+    html = fetch_page()
 
-    matches = re.findall(
-        r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
-        html,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
+    soup = BeautifulSoup(html, "html.parser")
 
     articles = []
 
-    for href, inner_html in matches:
-        title = re.sub(r"<[^>]+>", " ", inner_html)
-        title = re.sub(r"\s+", " ", title).strip()
+    for link in soup.find_all("a", href=True):
+        title = link.get_text(strip=True)
+        url = link["href"]
 
         if not title:
             continue
 
-        url = urljoin(ZELDA_URL, href)
+        if url.startswith("/"):
+            url = "https://zelda.nintendo.com" + url
 
-        combined = (title + " " + url).lower()
+        articles.append({
+            "title": title,
+            "url": url
+        })
 
-        if not any(word in combined for word in NEWS_WORDS):
-            continue
-
-        if any(
-            bad in url.lower()
-            for bad in (
-                "facebook.com",
-                "twitter.com",
-                "x.com",
-                "youtube.com",
-                "instagram.com",
-                "privacy",
-                "terms",
-                "support",
-            )
-        ):
-            continue
-
-        articles.append(
-            {
-                "title": title,
-                "url": url,
-            }
-        )
-
+    # Remove duplicates
+    seen = set()
     unique = []
-    seen_urls = set()
 
     for article in articles:
-        if article["url"] not in seen_urls:
-            seen_urls.add(article["url"])
+        if article["url"] not in seen:
+            seen.add(article["url"])
             unique.append(article)
 
     return unique
@@ -100,61 +59,46 @@ def load_seen():
     try:
         with open("seen.json", "r", encoding="utf-8") as f:
             return set(json.load(f))
-    except (FileNotFoundError, json.JSONDecodeError):
+    except:
         return set()
 
 
 def save_seen(urls):
     with open("seen.json", "w", encoding="utf-8") as f:
-        json.dump(sorted(urls), f, indent=2)
+        json.dump(list(urls), f, indent=2)
 
 
 def send_to_discord(article):
     if not DISCORD_WEBHOOK:
-        raise RuntimeError("DISCORD_WEBHOOK secret is missing.")
+        print("No Discord webhook found.")
+        return
 
     payload = {
-        "content": (
-            "🗡️ **New Zelda News!**\n"
+        "content":
+            f"🗡️ **New Zelda Link Found**\n"
             f"**{article['title']}**\n"
             f"{article['url']}"
-        )
     }
 
-    data = json.dumps(payload).encode("utf-8")
-
-    req = urllib.request.Request(
+    requests.post(
         DISCORD_WEBHOOK,
-        data=data,
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "ZeldaNewsDiscordBot/1.0",
-        },
-        method="POST",
+        json=payload,
+        timeout=30
     )
-
-    context = ssl._create_unverified_context()
-
-    with urllib.request.urlopen(
-        req,
-        timeout=30,
-        context=context
-    ) as response:
-        response.read()
 
 
 def main():
-    print(f"Checking {ZELDA_URL}")
+    print("Bot started")
 
     articles = get_news_links()
 
-    current_urls = {article["url"] for article in articles}
+    print(f"Found {len(articles)} links")
+
+    current_urls = {a["url"] for a in articles}
     seen = load_seen()
 
-    print(f"Found {len(articles)} Zelda links.")
-
     if not seen:
-        print("First run: saving existing articles.")
+        print("First run, saving all links")
         save_seen(current_urls)
         return
 
@@ -164,10 +108,9 @@ def main():
         if article["url"] not in seen
     ]
 
-    print(f"Found {len(new_articles)} new article(s).")
+    print(f"Found {len(new_articles)} new links")
 
-    for article in reversed(new_articles):
-        print("Sending:", article["title"])
+    for article in new_articles:
         send_to_discord(article)
 
     save_seen(seen | current_urls)
