@@ -1,4 +1,4 @@
-name: Nintendo + Zelda News
+name: Nintendo News
 
 on:
   workflow_dispatch:
