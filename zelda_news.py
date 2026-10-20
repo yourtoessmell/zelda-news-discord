@@ -3,18 +3,21 @@ import os
 import requests
 from bs4 import BeautifulSoup
 
-ZELDA_URL = "https://zelda.nintendo.com/"
+SOURCES = [
+    "https://zelda.nintendo.com/",
+    "https://www.nintendo.com/us/whatsnew/"
+]
+
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK")
 
 
-def fetch_page():
+def fetch_page(url):
     response = requests.get(
-        ZELDA_URL,
+        url,
         headers={
             "User-Agent": "Mozilla/5.0"
         },
-        timeout=30,
-        verify=False
+        timeout=30
     )
 
     response.raise_for_status()
@@ -22,34 +25,42 @@ def fetch_page():
 
 
 def get_news_links():
-    html = fetch_page()
-
-    soup = BeautifulSoup(html, "html.parser")
-
     articles = []
 
-    for link in soup.find_all("a", href=True):
-        title = link.get_text(strip=True)
-        url = link["href"]
+    for source_url in SOURCES:
+        print(f"Checking {source_url}")
 
-        if not title:
-            continue
+        try:
+            html = fetch_page(source_url)
+            soup = BeautifulSoup(html, "html.parser")
 
-        if url.startswith("/"):
-            url = "https://zelda.nintendo.com" + url
+            for link in soup.find_all("a", href=True):
+                title = link.get_text(strip=True)
+                url = link["href"]
 
-        articles.append({
-            "title": title,
-            "url": url
-        })
+                if not title:
+                    continue
 
-    # Remove duplicates
-    seen = set()
+                if url.startswith("/"):
+                    if "nintendo.com" in source_url:
+                        url = "https://www.nintendo.com" + url
+                    else:
+                        url = "https://zelda.nintendo.com" + url
+
+                articles.append({
+                    "title": title,
+                    "url": url
+                })
+
+        except Exception as e:
+            print(f"Error checking {source_url}: {e}")
+
+    seen_urls = set()
     unique = []
 
     for article in articles:
-        if article["url"] not in seen:
-            seen.add(article["url"])
+        if article["url"] not in seen_urls:
+            seen_urls.add(article["url"])
             unique.append(article)
 
     return unique
@@ -59,25 +70,26 @@ def load_seen():
     try:
         with open("seen.json", "r", encoding="utf-8") as f:
             return set(json.load(f))
-    except:
+    except Exception:
         return set()
 
 
 def save_seen(urls):
     with open("seen.json", "w", encoding="utf-8") as f:
-        json.dump(list(urls), f, indent=2)
+        json.dump(sorted(list(urls)), f, indent=2)
 
 
 def send_to_discord(article):
     if not DISCORD_WEBHOOK:
-        print("No Discord webhook found.")
+        print("No Discord webhook configured.")
         return
 
     payload = {
-        "content":
-            f"🗡️ **New Zelda Link Found**\n"
+        "content": (
+            "🎮 **New Nintendo/Zelda Link Found!**\n\n"
             f"**{article['title']}**\n"
             f"{article['url']}"
+        )
     }
 
     requests.post(
@@ -88,17 +100,17 @@ def send_to_discord(article):
 
 
 def main():
-    print("Bot started")
+    print("Starting Nintendo + Zelda News Bot")
 
     articles = get_news_links()
 
-    print(f"Found {len(articles)} links")
+    print(f"Found {len(articles)} unique links")
 
-    current_urls = {a["url"] for a in articles}
+    current_urls = {article["url"] for article in articles}
     seen = load_seen()
 
     if not seen:
-        print("First run, saving all links")
+        print("First run: saving all links.")
         save_seen(current_urls)
         return
 
@@ -111,6 +123,7 @@ def main():
     print(f"Found {len(new_articles)} new links")
 
     for article in new_articles:
+        print(f"Sending: {article['title']}")
         send_to_discord(article)
 
     save_seen(seen | current_urls)
