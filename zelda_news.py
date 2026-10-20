@@ -86,7 +86,7 @@ def send_to_discord(article):
 
     payload = {
         "content": (
-            "🎮 **New Nintendo news just came in! <@&1052211616663470160>**\n\n"
+            "✒️ **New Nintendo news just came in! <@&1052211616663470160>**\n\n"
             f"**{article['title']}**\n"
             f"{article['url']}"
         )
