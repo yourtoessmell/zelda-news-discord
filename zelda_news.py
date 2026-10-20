@@ -1,4 +1,3 @@
-raise Exception("THIS IS THE NEW FILE")
 import json
 import os
 import requests
