@@ -4,12 +4,12 @@ import re
 import unicodedata
 from urllib.parse import (
     parse_qsl,
-    urlencode,
-    urldefrag,
     unquote,
+    urldefrag,
     urljoin,
     urlparse,
     urlunparse,
+    urlencode,
 )
 
 import requests
@@ -162,8 +162,7 @@ def normalize_url(url):
 
 
 def is_nintendo_url(url):
-    hostname = urlparse(url).hostname or ""
-    hostname = hostname.casefold()
+    hostname = (urlparse(url).hostname or "").casefold()
     return hostname == "nintendo.com" or hostname.endswith(".nintendo.com")
 
 
@@ -227,6 +226,10 @@ def get_news_links():
             if not is_nintendo_url(url):
                 continue
 
+            # Ignore Nintendo search pages, not just news articles.
+            if "/search/" in urlparse(url).path.casefold():
+                continue
+
             url = normalize_url(url)
             if url in seen_urls:
                 continue
@@ -278,7 +281,9 @@ def load_seen():
         urls = data.get("urls", [])
         titles = data.get("titles", [])
     else:
-        raise ValueError("seen.json must contain a URL list or an object with urls and titles.")
+        raise ValueError(
+            "seen.json must contain a URL list or an object with urls and titles."
+        )
 
     if not isinstance(urls, list) or not all(
         isinstance(url, str) for url in urls
@@ -293,8 +298,7 @@ def load_seen():
     normalized_urls = {normalize_url(url) for url in urls}
     normalized_titles = set(titles)
 
-    # Older records have URLs but no saved headline keys. Use URL slugs as a
-    # best-effort bridge so old links can match their current headlines.
+    # Use old URL slugs as a best-effort bridge for existing seen.json files.
     normalized_titles.update(
         key for key in (title_key_from_url(url) for url in urls) if key
     )
@@ -314,7 +318,8 @@ def save_seen(seen):
 def send_to_discord(article):
     if not DISCORD_WEBHOOK:
         raise RuntimeError(
-            "No Discord webhook configured. Set the DISCORD_WEBHOOK environment variable."
+            "No Discord webhook configured. "
+            "Set the DISCORD_WEBHOOK environment variable."
         )
 
     payload = {
@@ -357,7 +362,7 @@ def main():
         url_key = normalize_url(article["url"])
         title_key = normalize_title(article["title"])
 
-        # Either a known URL or a known headline means this story was seen.
+        # A known URL or headline means this story was already seen.
         if url_key in seen["urls"] or title_key in seen["titles"]:
             seen["urls"].add(url_key)
             seen["titles"].add(title_key)
